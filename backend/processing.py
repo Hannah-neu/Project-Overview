@@ -51,40 +51,40 @@ def process(filename: str, data: bytes):
         try:
             wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
             epoch = wb.epoch
-            if 'Sheet1' not in wb.sheetnames: raise ImportProblem('缺少工作表 Sheet1。')
+            if 'Sheet1' not in wb.sheetnames: raise ImportProblem('Worksheet Sheet1 is missing.')
             rows = list(wb['Sheet1'].iter_rows())
-            if len(rows) < 2: raise ImportProblem('Sheet1 缺少第 2 行表头。')
+            if len(rows) < 2: raise ImportProblem('The header row is missing from row 2 of Sheet1.')
             headers = [c.value for c in rows[1]]
             source = [[(None if c.data_type == 'e' else c.value) for c in row] for row in rows[2:]]
             for row in rows[2:]:
                 for i,c in enumerate(row):
                     if c.data_type == 'e': issues[f'Excel error: {headers[i] if i < len(headers) else i+1}'] += 1
         except ImportProblem: raise
-        except Exception as exc: raise ImportProblem(f'Excel 文件无法读取：{exc}') from exc
+        except Exception as exc: raise ImportProblem(f'Unable to read the Excel file: {exc}') from exc
     elif suffix == '.csv':
         try:
             try: content = data.decode('utf-8-sig')
             except UnicodeDecodeError: content = data.decode('gb18030')
             all_rows = list(csv.reader(io.StringIO(content)))
-            if not all_rows: raise ImportProblem('CSV 文件为空。')
+            if not all_rows: raise ImportProblem('The CSV file is empty.')
             header_index = 0 if 'prj mcr-id' in [normalized(x) for x in all_rows[0]] else 1
-            if len(all_rows) <= header_index: raise ImportProblem('CSV 文件缺少表头。')
+            if len(all_rows) <= header_index: raise ImportProblem('The CSV header row is missing.')
             headers,source = all_rows[header_index],all_rows[header_index+1:]
             from openpyxl.utils.datetime import WINDOWS_EPOCH
             epoch = WINDOWS_EPOCH
         except ImportProblem: raise
-        except (UnicodeError,csv.Error) as exc: raise ImportProblem(f'CSV 文件无法读取：{exc}') from exc
+        except (UnicodeError,csv.Error) as exc: raise ImportProblem(f'Unable to read the CSV file: {exc}') from exc
     else:
-        raise ImportProblem('目前支持 .xlsx 和 .csv；旧版 .xls 暂不支持，请先另存为 .xlsx。')
+        raise ImportProblem('Supported formats are .xlsx and .csv. Save legacy .xls files as .xlsx first.')
     # Normalize only names, not values. Refuse ambiguous headers rather than silently choosing one.
     lookup = {}
     for i,h in enumerate(headers):
         if h is None or str(h).strip() == '': continue
         key = normalized(h)
-        if key in lookup: raise ImportProblem(f'表头重复或标准化后冲突：{h}')
+        if key in lookup: raise ImportProblem(f'Duplicate or conflicting column headers: {h}')
         lookup[key] = i
     missing = [x for x in FIELDS if normalized(x) not in lookup]
-    if missing: raise ImportProblem('缺少必需字段：' + ', '.join(missing))
+    if missing: raise ImportProblem('Missing required columns: ' + ', '.join(missing))
     mapping = {name:lookup[normalized(name)] for name in FIELDS}
     extras = [(str(h),i) for i,h in enumerate(headers) if h is not None and str(h).strip() and normalized(h) not in {normalized(x) for x in FIELDS}]
     projects=[]; milestones=[]
@@ -107,4 +107,4 @@ def process(filename: str, data: bytes):
             value=values[i] if i<len(values) else None
             if value not in (None,''): milestones.append({**base,'milestone plan':name,'planned date':scalar(value)})
     ids=Counter(x['PRJ MCR-ID'] for x in projects if x['PRJ MCR-ID'] not in (None,''))
-    return {'source':{'filename':Path(filename).name,'format':suffix,'sheet':'Sheet1' if suffix=='.xlsx' else None,'data_note':'读取文件保存的值；不刷新外部链接或重新计算公式。','extra_columns':[x[0] for x in extras]},'summary':{'project_rows':len(projects),'distinct_project_ids':len(ids),'duplicate_id_groups':sum(n>1 for n in ids.values()),'milestone_rows':len(milestones),'component_counts':{k:sum(str(p[col] or '').casefold()=='y' for p in projects) for k,col in COMPONENTS.items()}},'issues':dict(issues),'projects':projects,'milestones':milestones}
+    return {'source':{'filename':Path(filename).name,'format':suffix,'sheet':'Sheet1' if suffix=='.xlsx' else None,'data_note':'Reads saved values; external links and formulas are not refreshed or recalculated.','extra_columns':[x[0] for x in extras]},'summary':{'project_rows':len(projects),'distinct_project_ids':len(ids),'duplicate_id_groups':sum(n>1 for n in ids.values()),'milestone_rows':len(milestones),'component_counts':{k:sum(str(p[col] or '').casefold()=='y' for p in projects) for k,col in COMPONENTS.items()}},'issues':dict(issues),'projects':projects,'milestones':milestones}
