@@ -116,6 +116,23 @@ def three_block_color(page):
     chosen = identified if identified else stacks
     return chosen[0][0][0] if len(chosen) == 1 else None
 
+def is_validation_status_page(page):
+    """Recognize the WorkOn proving sheet using visible page coordinates."""
+    text = norm(page.get_text())
+    if not re.search(r'\bworkon\b', text):
+        return False
+    if not any((box := visual(page, hit)).x0 < page.rect.width * .5 and box.y0 < page.rect.height * .33 for hit in page.search_for('EMEAERPBLATT')):
+        return False
+    for label in page.search_for('Application Type'):
+        anchor = visual(page, label)
+        for value in page.search_for('Proving Sheet PS'):
+            box = visual(page, value)
+            dx = box.x0 - anchor.x1
+            dy = abs((box.y0 + box.y1 - anchor.y0 - anchor.y1) / 2)
+            if -3 <= dx <= page.rect.width * .35 and dy <= max(12, anchor.height):
+                return True
+    return False
+
 def has_superopl_color(page):
     # Render the upper-left corner so both embedded-image and vector logos work.
     clip = pymupdf.Rect(0, 0, page.rect.width * .4, page.rect.height * .16)
@@ -148,14 +165,15 @@ def analyze(data):
         return found
     prcs = pages('project summary', 'basic data', 'system/components', 'milestone', 'customer')
     specs = [
-        ('Project time schedule', pages('milestones','product development','task name')),
+        ('Project time schedule', [i+1 for i, page in enumerate(doc) if re.search(r'\bqgc\s*0\b', texts[i]) and re.search(r'\bqgc\s*4\b', texts[i]) and any(visual(page, hit).x0 < page.rect.width * .5 for hit in page.search_for('RB Overall Milestones'))]),
         ('R&D Sheet', titles('R&D Sheet')),
         ('Profitability data with history', [i+1 for i,t in enumerate(texts) if ('profitiability data with history' in t or 'profitability data with history' in t) and 'profitability data' in t]),
         ('Decision sheet', titles('Decision minutes')),
         ('Effort Tracking', titles('Effort Tracking')),
         ('oneQ cover page', pages('assessment cover sheet','project data','assessment results')),
-        ('System assessment (diagram, tracking of critical points, signature page)', [n for n in pages('system assessment') if n not in prcs]),
+        ('System assessment', [n for n in pages('system assessment') if n not in prcs]),
         ('Risk management report', titles('Risk Report')),
+        ('Status of project validation', [i+1 for i, page in enumerate(doc) if is_validation_status_page(page)]),
     ]
     results = []
     def add(name,status,detail,pages_=None):
@@ -175,22 +193,18 @@ def analyze(data):
                 add(name,'pass','Risk Report title and magenta logo at the upper left found.',verified)
             continue
         add(name,'pass' if found else 'missing','A matching page was found.' if found else 'No page matched all features. Check for missing documents or review manually.',found)
-    corrective = pages('corrective actions of last decision sheet')
     decisions = titles('Decision minutes')
-    pmp_pages = [i + 1 for i, text in enumerate(texts) if len(re.findall(r'\bproject\s+management\s+plan\b', text)) > 2]
-    if corrective:
-        add('Last decision minutes','pass' if len(decisions)>=2 else 'missing',f'A corrective-actions page was found (page(s) {", ".join(map(str,corrective))}). At least 2 Decision minutes pages are required; {len(decisions)} found.', decisions)
-    else:
-        add('Last decision minutes','na','No previous corrective-actions page was found; this check does not apply.')
+    pmp_pages = [i + 1 for i, text in enumerate(texts) if re.search(r'\bmp-201\.01-102-ps\b', text) and re.search(r'\bproject\s+management\s+plan\b', text)]
+    add('Last decision minutes','pass' if len(decisions)>=2 else 'missing',f'At least 2 Decision sheet pages are required; {len(decisions)} found.', decisions)
     for n in prcs:
         p = doc[n-1]
         apic = nearest_value(p,'APIC',set('ABCDE')) or nearest_value(p,'PIC',set('ABCDE'))
         if apic == 'E':
             add('PMP / APIC','na','APIC is E; no additional PMP reminder is required.',[n])
         elif apic and pmp_pages:
-            add('PMP / APIC','pass',f'APIC is {apic}; Project Management Plan appears more than twice on a page, indicating that PMP material was provided.',pmp_pages)
+            add('PMP / APIC','pass',f'APIC is {apic}; A page contains both MP-201.01-102-PS and Project Management Plan, indicating that PMP material was provided.',pmp_pages)
         elif apic:
-            add('PMP / APIC','review',f'APIC is {apic}; PMP material is required. No page contains Project Management Plan more than twice; provide it or verify manually.',[n])
+            add('PMP / APIC','review',f'APIC is {apic}; PMP material is required. No page contains both MP-201.01-102-PS and Project Management Plan; provide it or verify manually.',[n])
         else:
             add('PMP / APIC','review','APIC / PIC could not be read reliably. Confirm manually whether PMP is required.',[n])
         color = label_color(p)
